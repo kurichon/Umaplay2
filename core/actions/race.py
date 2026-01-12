@@ -283,21 +283,118 @@ class RaceFlow:
         return keep
 
     def _pick_view_results_button(self) -> Optional[DetectionDict]:
-        """Among white buttons, choose the one that OCR-matches 'VIEW RESULTS' best."""
+        """
+        Find the 'View Results' button with multiple fallback strategies:
+        1. OCR matching on white buttons (original method)
+        2. Position-based heuristic (white buttons in expected region)
+        3. Active button classifier on white buttons
+        4. Green button fallback if whites are misclassified
+        """
         img, dets = self._collect("race_view_btn")
         whites = find(dets, "button_white")
-        if not whites:
-            return None
-
-        best_d, best_s = None, 0.0
-        for d in whites:
-            txt = (self.ocr.text(crop_pil(img, d["xyxy"])) or "").strip()
-            score = max(
-                fuzzy_ratio(txt, "VIEW RESULTS"), fuzzy_ratio(txt, "VIEW RESULT")
+        
+        # Strategy 1: OCR matching (original method)
+        if whites:
+            best_d, best_s = None, 0.0
+            for d in whites:
+                try:
+                    txt = (self.ocr.text(crop_pil(img, d["xyxy"])) or "").strip()
+                    score = max(
+                        fuzzy_ratio(txt, "VIEW RESULTS"), 
+                        fuzzy_ratio(txt, "VIEW RESULT"),
+                        fuzzy_ratio(txt, "RESULTS"),
+                        fuzzy_ratio(txt, "VIEW")
+                    )
+                    if score > best_s and score > 0.01:
+                        best_d, best_s = d, score
+                except Exception as e:
+                    logger_uma.debug(f"[race] OCR failed for white button: {e}")
+                    continue
+            
+            if best_d and best_s > 0.50:
+                logger_uma.debug(f"[race] Found View Results via OCR (score={best_s:.2f})")
+                return best_d
+        
+        # Strategy 2: Position-based heuristic
+        # View Results is typically in the bottom 30% of the screen
+        if whites:
+            img_height = img.height
+            
+            # Filter whites in bottom region (bottom 30% of screen)
+            bottom_whites = []
+            for d in whites:
+                x1, y1, x2, y2 = d["xyxy"]
+                center_y = (y1 + y2) / 2
+                
+                # Check if button is in bottom 30% of screen
+                if center_y > img_height * 0.70:
+                    bottom_whites.append(d)
+            
+            if bottom_whites:
+                # Pick the left-most button in the bottom region
+                # (View Results is typically on the left side)
+                left_most = min(bottom_whites, key=lambda d: d["xyxy"][0])
+                logger_uma.debug("[race] Found View Results via position heuristic (bottom-left)")
+                return left_most
+        
+        # Strategy 3: Active button classifier fallback
+        # Try to identify which white button is active/clickable
+        if whites:
+            try:
+                clf = ActiveButtonClassifier.load(Settings.IS_BUTTON_ACTIVE_CLF_PATH)
+                active_buttons = []
+                
+                for d in whites:
+                    crop = crop_pil(img, d["xyxy"])
+                    try:
+                        p = float(clf.predict_proba(crop))
+                        if p >= 0.51:
+                            active_buttons.append((d, p))
+                    except Exception:
+                        continue
+                
+                if active_buttons:
+                    # Return the most active button
+                    best_active = max(active_buttons, key=lambda x: x[1])
+                    logger_uma.debug(
+                        f"[race] Found View Results via active classifier (prob={best_active[1]:.3f})"
+                    )
+                    return best_active[0]
+            except Exception as e:
+                logger_uma.debug(f"[race] Active button classifier failed: {e}")
+        
+        # Strategy 4: Check if any white button exists at all
+        # Sometimes the button is there but OCR completely fails
+        if whites:
+            # Just return the first white button as last resort
+            logger_uma.warning(
+                "[race] Falling back to first white button (all detection methods failed)"
             )
-            if score > best_s and score > 0.01:
-                best_d, best_s = d, score
-        return best_d
+            return whites[0]
+        
+        # Strategy 5: Green button misclassification fallback
+        # Sometimes YOLO misclassifies the white button as green
+        greens = find(dets, "button_green")
+        if greens:
+            for d in greens:
+                try:
+                    txt = (self.ocr.text(crop_pil(img, d["xyxy"])) or "").strip()
+                    score = max(
+                        fuzzy_ratio(txt, "VIEW RESULTS"), 
+                        fuzzy_ratio(txt, "VIEW RESULT"),
+                        fuzzy_ratio(txt, "RESULTS"),
+                        fuzzy_ratio(txt, "VIEW")
+                    )
+                    if score > 0.50:
+                        logger_uma.warning(
+                            f"[race] Found View Results in GREEN buttons (misclassified, score={score:.2f})"
+                        )
+                        return d
+                except Exception:
+                    continue
+        
+        logger_uma.warning("[race] All View Results detection strategies failed")
+        return None
 
     def _pick_race_square(
         self,
