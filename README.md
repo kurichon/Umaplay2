@@ -1,3 +1,10 @@
+# Feature to make:
+
+- Be able to start career from main lobby (game start) -> limitations set when selecting borrow card
+- Email notification when career done / bot stopped
+- Combine career + tt + daily race
+- Claim rewards from mailbox / daily
+
 # Umamusume Auto Train
 
 > **Latest Update (v0.4.0)**: Unity Cup strategy, PAL policy, ADB mode, preset groups, and smarter training/race handling.
