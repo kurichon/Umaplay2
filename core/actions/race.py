@@ -403,13 +403,7 @@ class RaceFlow:
         
         Returns True if the flow completed successfully, False otherwise.
         """
-        # First click: View Results button
-        self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
-        logger_uma.debug("[race] Clicked View Results button (first click)")
-        
-        # Wait for UI transition
-        time.sleep(random.uniform(1.0, 1.3))
-        
+
         # Second click: Confirmation (this is the critical one that often fails)
         # Try multiple strategies to ensure it succeeds
         
