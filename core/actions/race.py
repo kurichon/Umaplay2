@@ -395,7 +395,82 @@ class RaceFlow:
         
         logger_uma.warning("[race] All View Results detection strategies failed")
         return None
+    def _handle_view_results_flow(self, view_btn: DetectionDict) -> bool:
+        """
+        Reliably handle the View Results button click sequence.
+        After clicking View Results, a second confirmation click is needed.
+        This method ensures both clicks succeed with multiple fallback strategies.
+        
+        Returns True if the flow completed successfully, False otherwise.
+        """
+        # First click: View Results button
+        self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
+        logger_uma.debug("[race] Clicked View Results button (first click)")
+        
+        # Wait for UI transition
+        time.sleep(random.uniform(1.0, 1.3))
+        
+        # Second click: Confirmation (this is the critical one that often fails)
+        # Try multiple strategies to ensure it succeeds
+        
+        # Strategy 1: Click the same View Results button again (it might still be there)
+        max_attempts = 3
+        click_succeeded = False
+        
+        for attempt in range(max_attempts):
+            logger_uma.debug(f"[race] View Results confirmation attempt {attempt + 1}/{max_attempts}")
+            
+            # Try clicking the exact same location again
+            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
+            time.sleep(random.uniform(3, 3.5))
+            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(3, 3))
+            time.sleep(random.uniform(0.3, 0.5))
+            
+            # Check if we've transitioned to the next screen
+            # Look for indicators that we're past the View Results screen:
+            # - NEXT button appeared
+            # - TRY AGAIN button appeared (loss scenario)
+            # - race_after_next appeared
+            if self.waiter.seen(
+                classes=("button_green",),
+                texts=("NEXT", "TRY AGAIN"),
+                tag="race_view_results_confirm_check",
+                threshold=0.3,
+            ):
+                logger_uma.info(f"[race] View Results confirmation succeeded (attempt {attempt + 1})")
+                click_succeeded = True
+                break
+            
+            if self.waiter.seen(
+                classes=("race_after_next",),
+                tag="race_view_results_pyramid_check",
+            ):
+                logger_uma.info(f"[race] View Results confirmation succeeded - pyramid detected (attempt {attempt + 1})")
+                click_succeeded = True
+                break
+            
+            # If not transitioned yet, try to click again
+            if attempt < max_attempts - 1:
+                # Try clicking the exact same location again
+                self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
+                time.sleep(random.uniform(3, 3.5))
+                self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(3, 3))
+                time.sleep(random.uniform(0.3, 0.5))
+        
+        if not click_succeeded:
+            logger_uma.warning("[race] View Results confirmation may have failed after all attempts")
+            # Do one final check with longer timeout
+            time.sleep(2.0)
+            if self.waiter.seen(
+                classes=("button_green", "race_after_next"),
+                tag="race_view_results_final_check",
+                threshold=0.3,
+            ):
+                logger_uma.info("[race] View Results flow succeeded on final check")
+                click_succeeded = True
 
+        return click_succeeded
+        
     def _pick_race_square(
         self,
         *,
@@ -851,11 +926,9 @@ class RaceFlow:
                 logger_uma.debug("[race] View Results inactive")
 
         if is_view_active and view_btn is not None:
-            # Tap 'View Results' a couple times to clear residual screens
-            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
-            time.sleep(random.uniform(3, 3.5))
-            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(3, 3))
-            time.sleep(random.uniform(0.3, 0.5))
+            # Use the new reliable click handler
+            if not self._handle_view_results_flow(view_btn):
+                logger_uma.warning("[race] View Results flow may have issues, continuing anyway")
         else:
             # Click green 'RACE' (prefer bottom-most; OCR disambiguation if needed)
             if not self.waiter.click_when(
