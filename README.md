@@ -1,3 +1,13 @@
+# Feature to make:
+- Fix logic (make sure careers run from start to finish with no intervention)
+- Email notification when career done / bot stopped
+- Get data to check career run-time (approx. completion time) -> optimize run time (Optimize logic, process repeats until desirable outcome reached)
+- Collect data for fans/ race win/lose (manual then auto) -> get at key points where the career gets stuck
+- Interactive UI instead of pressing Function keys (possible toggle tt/daily race/careers later)
+- Be able to start career from main lobby (game start) -> limitations set when selecting borrow card
+- Combine career + tt + daily race
+- Claim rewards from mailbox / daily
+
 # Umamusume Auto Train
 
 > **Latest Update (v0.4.0)**: Unity Cup strategy, PAL policy, ADB mode, preset groups, and smarter training/race handling.
