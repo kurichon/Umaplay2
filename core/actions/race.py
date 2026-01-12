@@ -457,7 +457,7 @@ class RaceFlow:
                 break
             
             # Click the same location
-            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=2)
+            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=3)
             time.sleep(0.4)
             
             # Check if we've transitioned to the next screen AFTER clicking
