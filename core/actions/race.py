@@ -399,68 +399,28 @@ class RaceFlow:
         """
         Reliably handle the View Results button click sequence.
         After clicking View Results, a second confirmation click is needed.
-        This method ensures both clicks succeed with multiple retry attempts.
+        This method ensures both clicks succeed with multiple fallback strategies.
         
         Returns True if the flow completed successfully, False otherwise.
         """
-        # First, check if we've already moved past View Results
-        already_past = self.waiter.seen(
-            classes=("button_green",),
-            texts=("NEXT", "TRY AGAIN"),
-            tag="race_view_results_already_past_check",
-            threshold=0.3,
-        )
-        
-        if already_past:
-            logger_uma.info("[race] Already past View Results - skipping click flow")
-            return True
-        
-        if self.waiter.seen(
-            classes=("race_after_next",),
-            tag="race_view_results_already_pyramid_check",
-        ):
-            logger_uma.info("[race] Already at pyramid - skipping View Results click flow")
-            return True
-        
-        # First click: View Results button
-        self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=1)
-        logger_uma.debug("[race] Clicked View Results button (first click)")
-        
-        # Wait for UI transition
-        time.sleep(random.uniform(1.0, 1.3))
-        
+
         # Second click: Confirmation (this is the critical one that often fails)
-        # Try multiple times to ensure it succeeds
+        # Try multiple strategies to ensure it succeeds
+        
+        # Strategy 1: Click the same View Results button again (it might still be there)
         max_attempts = 3
         click_succeeded = False
         
         for attempt in range(max_attempts):
             logger_uma.debug(f"[race] View Results confirmation attempt {attempt + 1}/{max_attempts}")
             
-            # Check if we've already transitioned BEFORE clicking
-            if self.waiter.seen(
-                classes=("button_green",),
-                texts=("NEXT", "TRY AGAIN"),
-                tag="race_view_results_pre_click_check",
-                threshold=0.3,
-            ):
-                logger_uma.info(f"[race] View Results already transitioned (detected before attempt {attempt + 1})")
-                click_succeeded = True
-                break
+            # Try clicking the exact same location again
+            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
+            time.sleep(random.uniform(3, 3.5))
+            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(3, 3))
+            time.sleep(random.uniform(0.3, 0.5))
             
-            if self.waiter.seen(
-                classes=("race_after_next",),
-                tag="race_view_results_pre_click_pyramid_check",
-            ):
-                logger_uma.info(f"[race] Pyramid already visible (detected before attempt {attempt + 1})")
-                click_succeeded = True
-                break
-            
-            # Click the same location
-            self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=3)
-            time.sleep(0.4)
-            
-            # Check if we've transitioned to the next screen AFTER clicking
+            # Check if we've transitioned to the next screen
             # Look for indicators that we're past the View Results screen:
             # - NEXT button appeared
             # - TRY AGAIN button appeared (loss scenario)
@@ -483,11 +443,13 @@ class RaceFlow:
                 click_succeeded = True
                 break
             
-            # If not transitioned yet and we have more attempts, retry
+            # If not transitioned yet, try to click again
             if attempt < max_attempts - 1:
-                # Click the exact same location again with the pattern that works
-                self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=2)
+                # Try clicking the exact same location again
+                self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(1, 2))
                 time.sleep(random.uniform(3, 3.5))
+                self.ctrl.click_xyxy_center(view_btn["xyxy"], clicks=random.randint(3, 3))
+                time.sleep(random.uniform(0.3, 0.5))
         
         if not click_succeeded:
             logger_uma.warning("[race] View Results confirmation may have failed after all attempts")
@@ -500,7 +462,7 @@ class RaceFlow:
             ):
                 logger_uma.info("[race] View Results flow succeeded on final check")
                 click_succeeded = True
-        
+
         return click_succeeded
         
     def _pick_race_square(
@@ -1114,175 +1076,47 @@ class RaceFlow:
             return self.lobby()
 
         else:
+            if not loss_indicator_seen:
+                self._race_result_counters["wins_or_no_loss"] += 1
+            elif should_retry:
+                self._race_result_counters["retry_skipped"] += 1
+                logger_uma.info(
+                    "[race] Retry expected but TRY AGAIN not clicked; continuing. | counters=%s",
+                    self._race_result_counters,
+                )
+            logger_uma.info(
+                "[race] Continuing without retry (loss_indicator=%s) | counters=%s",
+                loss_indicator_seen,
+                self._race_result_counters,
+            )
             # After the race/UI flow → 'NEXT' / 'OK' / 'PROCEED'
-            # Use robust click handling similar to view results
             logger_uma.debug(
                 "[race] Looking for button_green 'Next' button. Shown after race."
             )
-            
-            # First, check if we've already skipped past to lobby or pyramid
-            already_at_lobby = self.waiter.seen(
-                classes=("lobby_races",),
-                tag="race_skip_check_lobby",
-                threshold=0.3,
+            self.waiter.click_when(
+                classes=("button_green",),
+                texts=("NEXT",),
+                forbid_texts=("TRY AGAIN",),
+                prefer_bottom=False,
+                allow_greedy_click=False,
+                timeout_s=4.6,
+                clicks=3,
+                tag="race_after_flow_next",
             )
-            already_at_pyramid = self.waiter.seen(
-                classes=("race_after_next",),
-                tag="race_skip_check_pyramid",
-                threshold=0.3,
-            )
-            
-            if already_at_lobby:
-                logger_uma.info("[race] Already at lobby - skipped NEXT button flow")
-                logger_uma.info("[race] RaceDay flow finished.")
-                return True
-            
-            if already_at_pyramid:
-                logger_uma.info("[race] Already at pyramid - skipping to pyramid NEXT flow")
-            else:
-                # Try to find and click the NEXT button with retries
-                max_next_attempts = 3
-                next_clicked = False
-                next_button_det = None
-                
-                for attempt in range(max_next_attempts):
-                    logger_uma.debug(f"[race] NEXT button attempt {attempt + 1}/{max_next_attempts}")
-                    
-                    # Check again if we skipped to lobby/pyramid during retries
-                    if self.waiter.seen(
-                        classes=("lobby_races",),
-                        tag="race_mid_check_lobby",
-                        threshold=0.3,
-                    ):
-                        logger_uma.info("[race] Detected lobby during NEXT retry - flow complete")
-                        logger_uma.info("[race] RaceDay flow finished.")
-                        return True
-                    
-                    if self.waiter.seen(
-                        classes=("race_after_next",),
-                        tag="race_mid_check_pyramid",
-                        threshold=0.3,
-                    ):
-                        logger_uma.info("[race] Detected pyramid during NEXT retry - jumping to pyramid flow")
-                        break
-                    
-                    # Try to click NEXT button
-                    clicked, det = self.waiter.click_when(
-                        classes=("button_green",),
-                        texts=("NEXT",),
-                        forbid_texts=("TRY AGAIN",),
-                        prefer_bottom=False,
-                        allow_greedy_click=False,
-                        timeout_s=2.0,
-                        clicks=3,
-                        tag="race_after_flow_next",
-                        return_object=True,
-                    )
-                    
-                    if clicked and det:
-                        next_button_det = det
-                        next_clicked = True
-                        logger_uma.info(f"[race] NEXT button clicked (attempt {attempt + 1})")
-                        break
-                    
-                    # If not clicked and we have more attempts, wait and retry
-                    if attempt < max_next_attempts - 1:
-                        logger_uma.debug(f"[race] NEXT button not found, retrying...")
-                        time.sleep(1.5)
-                
-                # If NEXT button was found, do additional confirmation clicks
-                if next_clicked and next_button_det:
-                    logger_uma.debug("[race] Performing NEXT button confirmation clicks")
-                    for confirm_attempt in range(2):
-                        time.sleep(random.uniform(0.3, 0.5))
-                        self.ctrl.click_xyxy_center(next_button_det["xyxy"], clicks=random.randint(2, 3))
-                        
-                        # Check if we've transitioned to lobby or pyramid
-                        if self.waiter.seen(
-                            classes=("lobby_races",),
-                            tag="race_next_to_lobby_check",
-                            threshold=0.3,
-                        ):
-                            logger_uma.info(f"[race] Lobby detected after NEXT confirmation {confirm_attempt + 1}")
-                            logger_uma.info("[race] RaceDay flow finished.")
-                            return True
-                        
-                        if self.waiter.seen(
-                            classes=("race_after_next",),
-                            tag="race_next_to_pyramid_check",
-                            threshold=0.3,
-                        ):
-                            logger_uma.debug(f"[race] Pyramid detected after NEXT confirmation {confirm_attempt + 1}")
-                            break
-            
-            # 'Next' special - Pyramid scenario with robust handling
+
+            # 'Next' special
             logger_uma.debug(
                 "[race] Looking for race_after_next special button. When Pyramid"
             )
-            
-            # Check one more time if we're already past pyramid to lobby
-            if self.waiter.seen(
-                classes=("lobby_races",),
-                tag="race_pre_pyramid_lobby_check",
-                threshold=0.3,
-            ):
-                logger_uma.info("[race] Already at lobby - skipped pyramid NEXT flow")
-                logger_uma.info("[race] RaceDay flow finished.")
-                return True
-            
-            max_pyramid_attempts = 3
-            pyramid_clicked = False
-            pyramid_button_det = None
-            
-            for attempt in range(max_pyramid_attempts):
-                logger_uma.debug(f"[race] Pyramid NEXT button attempt {attempt + 1}/{max_pyramid_attempts}")
-                
-                # Check if we skipped to lobby during pyramid retries
-                if self.waiter.seen(
-                    classes=("lobby_races",),
-                    tag="race_pyramid_mid_lobby_check",
-                    threshold=0.3,
-                ):
-                    logger_uma.info("[race] Detected lobby during pyramid retry - flow complete")
-                    logger_uma.info("[race] RaceDay flow finished.")
-                    return True
-                
-                clicked, det = self.waiter.click_when(
-                    classes=("race_after_next",),
-                    texts=("NEXT",),
-                    prefer_bottom=True,
-                    timeout_s=2.5,
-                    clicks=random.randint(2, 4),
-                    tag="race_after",
-                    return_object=True,
-                )
-                
-                if clicked and det:
-                    pyramid_button_det = det
-                    pyramid_clicked = True
-                    logger_uma.info(f"[race] Pyramid NEXT button clicked (attempt {attempt + 1})")
-                    break
-                
-                # If not clicked and we have more attempts, wait and retry
-                if attempt < max_pyramid_attempts - 1:
-                    logger_uma.debug(f"[race] Pyramid NEXT button not found, retrying...")
-                    time.sleep(1.5)
-            
-            # If pyramid button was found, do additional confirmation clicks
-            if pyramid_clicked and pyramid_button_det:
-                logger_uma.debug("[race] Performing Pyramid NEXT button confirmation clicks")
-                for confirm_attempt in range(2):
-                    time.sleep(random.uniform(0.3, 0.5))
-                    self.ctrl.click_xyxy_center(pyramid_button_det["xyxy"], clicks=random.randint(1, 2))
-                    
-                    # Check if we've transitioned back to lobby
-                    if self.waiter.seen(
-                        classes=("lobby_races",),
-                        tag="race_pyramid_to_lobby_check",
-                        threshold=0.3,
-                    ):
-                        logger_uma.debug(f"[race] Lobby detected after Pyramid NEXT confirmation {confirm_attempt + 1}")
-                        break
+
+            self.waiter.click_when(
+                classes=("race_after_next",),
+                texts=("NEXT",),
+                prefer_bottom=True,
+                timeout_s=6.0,
+                clicks=random.randint(2, 4),
+                tag="race_after",
+            )
 
             # Optional: Confirm 'Next'. TODO understand when to use
             # self.waiter.click_when(
